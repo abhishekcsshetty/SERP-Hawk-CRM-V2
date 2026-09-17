@@ -1,0 +1,16 @@
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.venv
+venv
+env
+.git
+.gitignore
+.env
+frontend
+node_modules
+*.log
+cleaned_contacts.xlsx
+debug_out.*
+audit_results.txt

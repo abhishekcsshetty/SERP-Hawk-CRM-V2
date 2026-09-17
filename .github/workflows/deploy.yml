@@ -1,0 +1,73 @@
+name: SERP Hawk CRM CI/CD Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  # ----------------------------------------------------
+  # 1. CI Stage: Validate Builds & Multi-Stage Containers
+  # ----------------------------------------------------
+  ci-validate:
+    name: Build & Validate Containers
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Validate Backend Docker Build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.backend
+          push: false
+          tags: serphawk-backend:ci
+
+      - name: Validate Frontend Docker Build
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: false
+          tags: serphawk-frontend:ci
+
+  # ----------------------------------------------------
+  # 2. CD Stage: Deploy to AWS Free Tier EC2
+  # ----------------------------------------------------
+  cd-deploy:
+    name: Deploy to AWS EC2
+    needs: ci-validate
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: SSH and Deploy to EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER || 'ubuntu' }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -e
+            cd /home/ubuntu/app || cd ~/app
+            
+            echo "Pulling latest code from GitHub..."
+            git pull origin main
+            
+            echo "Rebuilding and restarting containers..."
+            docker compose up --build -d
+            
+            echo "Running database schema migrations..."
+            docker exec serphawk_backend python create_tables.py
+            docker exec serphawk_backend python seed_db.py
+            
+            echo "Pruning unused images to conserve EBS storage..."
+            docker image prune -f
+            
+            echo "Deployment successfully completed!"
