@@ -50,4 +50,7 @@ tmp_check_version.py
 crash.log
 *.tfvars
 *.tfvars.json
+*.pem
+*.key
+
 

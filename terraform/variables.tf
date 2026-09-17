@@ -5,15 +5,15 @@ variable "aws_region" {
 }
 
 variable "instance_type" {
-  description = "AWS EC2 instance type (Free Tier eligible: t2.micro or t3.micro)"
+  description = "AWS EC2 instance type (Free Tier eligible: t3.micro or t2.micro)"
   type        = string
-  default     = "t2.micro"
+  default     = "t3.micro"
 }
 
 variable "key_name" {
   description = "Name of existing AWS EC2 Key Pair for SSH access"
   type        = string
-  default     = ""
+  default     = "serphawk-key"
 }
 
 variable "admin_cidr" {

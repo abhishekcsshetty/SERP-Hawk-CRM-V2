@@ -55,10 +55,17 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             set -e
-            cd /home/ubuntu/app || cd ~/app
-            
-            echo "Pulling latest code from GitHub..."
-            git pull origin main
+            if [ ! -d "/home/ubuntu/app" ]; then
+              echo "First-time deployment: cloning repository..."
+              git clone https://github.com/abhishekcsshetty/SERP-Hawk-CRM-V2.git /home/ubuntu/app
+              cd /home/ubuntu/app
+              cp .env.example .env
+              sed -i "s|http://localhost:8000|http://${{ secrets.EC2_HOST }}|g" .env
+            else
+              cd /home/ubuntu/app
+              echo "Pulling latest code from GitHub..."
+              git pull origin main
+            fi
             
             echo "Rebuilding and restarting containers..."
             docker compose up --build -d
