@@ -59,24 +59,50 @@ When deploying on AWS within strict **Free Tier / Zero-Cost** limits, architectu
 
 ```mermaid
 graph TD
-    User["👤 Browser Client"] -->|"HTTP / HTTPS Port 80/443"| IGW["AWS Internet Gateway"]
-    
+    User["👤 Browser Client / Admin"] -->|"Inbound HTTP (80) / HTTPS (443) / SSH (22)"| IGW["AWS Internet Gateway"]
+
     subgraph VPC["AWS Virtual Private Cloud (VPC)"]
         subgraph PublicSubnet["Public Subnet"]
-            subgraph EC2["EC2 t2.micro / t3.micro (1 vCPU, 1 GB RAM)"]
-                Nginx["Nginx Reverse Proxy (Port 80)"]
-                
-                Nginx -->|"/ (Frontend)"| Frontend["Next.js Container (Port 3000)"]
-                Nginx -->|"/api, /docs, /ws"| Backend["FastAPI Container (Port 8000)"]
-                
-                Backend -->|"TCP 5432"| DB["PostgreSQL 16 Alpine Container (Port 5432)"]
+            subgraph SG["Security Group (serphawk-sg: Inbound 80, 443, 22)"]
+                subgraph EC2["EC2 t2.micro / t3.micro (1 vCPU, 1 GB RAM)"]
+                    Nginx["Nginx Reverse Proxy (Port 80)"]
+                    
+                    subgraph DockerNetwork["Isolated Docker Bridge Network"]
+                        Frontend["Next.js Container (Port 3000)"]
+                        Backend["FastAPI Container (Port 8000)"]
+                        DB[("PostgreSQL 16 Alpine (Port 5432)")]
+                    end
+                end
             end
         end
     end
-    
-    Backend -->|"Outbound HTTPS"| OpenAI["OpenAI API"]
-    Backend -->|"Outbound HTTPS"| Gemini["Google Gemini API"]
+
+    %% Inbound Traffic Flow
+    IGW -->|"Inbound Traffic Allowed by SG"| Nginx
+    Nginx -->|"/ (Frontend UI)"| Frontend
+    Nginx -->|"/api, /docs, /ws"| Backend
+    Backend -->|"Internal TCP 5432"| DB
+
+    %% Outbound Traffic (External AI APIs)
+    subgraph External["External Cloud APIs (Third-Party SaaS)"]
+        OpenAI["OpenAI API (GPT-4o-mini)"]
+        Gemini["Google Gemini API (Vision OCR)"]
+    end
+
+    Backend -.->|"Outbound HTTPS (Egress Port 443)"| OpenAI
+    Backend -.->|"Outbound HTTPS (Egress Port 443)"| Gemini
 ```
+
+### 🔍 Traffic Flow Breakdown:
+- **Inbound Traffic (Ingress)**:
+  - Users send HTTP (`80`) and HTTPS (`443`) requests via the **AWS Internet Gateway (IGW)**.
+  - The **Security Group (`serphawk-sg`)** inspects and permits inbound traffic on ports `80`, `443`, and `22` (SSH admin access).
+  - Traffic enters **Nginx**, which acts as a reverse proxy, SSL termination, and single point of entry, routing `/` to Next.js and `/api`, `/docs`, `/ws` to FastAPI.
+  - PostgreSQL is completely isolated inside the internal Docker bridge network (not exposed to the public internet).
+- **Outbound Traffic (Egress)**:
+  - **Why does FastAPI make outbound calls?** SERP Hawk CRM integrates with **OpenAI** (for AI email drafting & insights) and **Google Gemini** (for business card OCR scanning).
+  - Because these are external third-party SaaS services outside AWS, FastAPI makes outbound client HTTPS requests (`Port 443` egress) to their public API endpoints.
+
 
 ---
 
