@@ -127,15 +127,15 @@ If project requirements scale beyond the Free Tier and require enterprise multi-
 
 ## 🐳 Local Docker Deployment (Low-Resource Mode)
 
-### Measured Resource Consumption
+### Measured Resource Consumption (Live AWS EC2 Server)
 
-| Container Name | Service | Memory Usage / Limit | CPU % |
-| :--- | :--- | :--- | :--- |
-| **`serphawk_backend`** | FastAPI (Python 3.13) | **94.85 MiB** / 256 MiB | 0.20% |
-| **`serphawk_frontend`** | Next.js 16 Standalone | **27.32 MiB** / 256 MiB | 0.00% |
-| **`serphawk_db`** | PostgreSQL 16 Alpine | **34.77 MiB** / 128 MiB | 0.07% |
-| **`serphawk_nginx`** | Nginx Reverse Proxy | **2.71 MiB** / 64 MiB | 0.00% |
-| **TOTAL STACK RAM** | — | **~160 MiB** | **< 0.3%** |
+| Container Name | Service | Live Measured RAM (`docker stats`) | Memory Limit | Memory % |
+| :--- | :--- | :--- | :--- | :--- |
+| **`serphawk_backend`** | FastAPI (Python 3.13) | **69.41 MiB** | 256 MiB | 27.11% |
+| **`serphawk_frontend`** | Next.js 16 Standalone | **14.95 MiB** | 256 MiB | 5.84% |
+| **`serphawk_db`** | PostgreSQL 16 Alpine | **4.97 MiB** | 128 MiB | 3.88% |
+| **`serphawk_nginx`** | Nginx Reverse Proxy | **1.33 MiB** | 64 MiB | 2.08% |
+| **TOTAL LIVE STACK RAM** | — | **~90.66 MiB** | **—** | **< 10% of 1 GB RAM** |
 
 ### Running Locally with Docker:
 ```bash
@@ -414,6 +414,32 @@ Verified active resources under AWS Free Tier in `us-east-1`:
 | Custom VPC (`serphawk-vpc`) | Public Subnet (`serphawk-public-subnet`) |
 | :---: | :---: |
 | ![AWS VPC](docs/images/04_aws_vpc_console.png) | ![Public Subnet](docs/images/05_aws_subnet_console.png) |
+
+---
+
+### 4. Live Server Telemetry & Low-Resource Verification (`docker stats` on EC2)
+Actual terminal verification directly on the live AWS EC2 instance (`ip-10-0-1-75` at public IP `44.198.171.185`), confirming all 4 microservices running healthy under **~90.66 MiB total stack RAM** (< 10% of 1 GB Free Tier memory):
+
+![Live EC2 Docker Stats](docs/images/08_ec2_docker_stats.png)
+
+```bash
+ubuntu@ip-10-0-1-75:~$ docker ps
+CONTAINER ID   IMAGE               COMMAND                  CREATED          STATUS                    PORTS                                       NAMES
+b051d1309765   app-backend         "uvicorn main:app --…"   6 seconds ago    Up 2 seconds              0.0.0.0:8000->8000/tcp                      serphawk_backend
+98bcbbb09fd7   nginx:alpine        "/docker-entrypoint.…"   10 minutes ago   Up 10 minutes             0.0.0.0:80->80/tcp                          serphawk_nginx
+03b3eabc2744   7dbd6c2d162c        "docker-entrypoint.s…"   10 minutes ago   Up 10 minutes             0.0.0.0:3000->3000/tcp                      serphawk_frontend
+2105037d7b23   postgres:16-alpine  "docker-entrypoint.s…"   15 minutes ago   Up 15 minutes (healthy)   0.0.0.0:5432->5432/tcp                      serphawk_db
+
+ubuntu@ip-10-0-1-75:~$ docker stats --no-stream
+CONTAINER ID   NAME                CPU %     MEM USAGE / LIMIT     MEM %     NET I/O         BLOCK I/O        PIDS
+b051d1309765   serphawk_backend    49.55%    69.41MiB / 256MiB     27.11%    516B / 126B     20.9MB / 0B      2
+98bcbbb09fd7   serphawk_nginx      0.00%     1.332MiB / 64MiB      2.08%     1.59kB / 268B   4.22MB / 1.41MB  2
+03b3eabc2744   serphawk_frontend   0.00%     14.95MiB / 256MiB     5.84%     1.48kB / 126B   44.6MB / 12.3MB  11
+2105037d7b23   serphawk_db         0.00%     4.969MiB / 128MiB     3.88%     71.3kB / 47.6kB 160MB / 23.7MB   6
+
+ubuntu@ip-10-0-1-75:~$ curl -s ifconfig.me
+44.198.171.185
+```
 
 ---
 
