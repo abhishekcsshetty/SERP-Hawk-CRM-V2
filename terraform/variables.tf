@@ -17,7 +17,19 @@ variable "key_name" {
 }
 
 variable "admin_cidr" {
-  description = "CIDR block permitted for SSH access (e.g. your IP: x.x.x.x/32)"
+  description = "CIDR block permitted for SSH access (e.g. your IP: x.x.x.x/32 or 0.0.0.0/0)"
   type        = string
   default     = "0.0.0.0/0"
+}
+
+variable "vpc_cidr" {
+  description = "CIDR block for the custom VPC"
+  type        = string
+  default     = "10.0.0.0/16"
+}
+
+variable "public_subnet_cidr" {
+  description = "CIDR block for the public subnet"
+  type        = string
+  default     = "10.0.1.0/24"
 }

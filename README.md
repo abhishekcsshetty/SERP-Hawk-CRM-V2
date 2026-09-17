@@ -14,7 +14,7 @@ AI-Powered CRM for SEO Agencies | Next.js 16 + FastAPI + PostgreSQL + Docker + T
    - [Provisioning Infrastructure with Terraform](#provisioning-infrastructure-with-terraform)
    - [Automated CI/CD Pipeline with GitHub Actions](#automated-cicd-pipeline-with-github-actions)
 7. [Manual AWS Resource Creation & Deployment Walkthrough](#-manual-aws-resource-creation--deployment-walkthrough)
-   - [Part A: Manual AWS Console Infrastructure Creation](#part-a-manual-aws-console-infrastructure-creation)
+   - [Part A: Manual AWS Console Infrastructure Creation (VPC, IGW, Subnet, RT, SG, EC2)](#part-a-manual-aws-console-infrastructure-creation-vpc-igw-subnet-rt-sg-ec2)
    - [Part B: Manual Server Setup & Application Deployment](#part-b-manual-server-setup--application-deployment)
 8. [Candidate Submission Checklist](#-candidate-submission-checklist)
 
@@ -162,7 +162,14 @@ The primary cloud deployment strategy utilizes **Terraform** for automated AWS i
 
 ### Provisioning Infrastructure with Terraform
 
-The [`terraform/`](file:///c:/Users/abhishek.cs/OneDrive%20-%20Trinity%20Mobility%20Pvt%20Ltd/Downloads/CRM-V2-SerpHawk-main/CRM-V2-SerpHawk-main/terraform) directory contains complete Infrastructure as Code (IaC) manifests to automatically provision the AWS cloud environment:
+The [`terraform/`](terraform/) directory contains complete Infrastructure as Code (IaC) manifests to provision an isolated AWS networking stack and compute instance from scratch:
+
+- **Custom VPC (`aws_vpc`)**: Dedicated CIDR block (`10.0.0.0/16`) with DNS support and DNS hostnames enabled.
+- **Internet Gateway (`aws_internet_gateway`)**: Attached to the custom VPC for inbound and outbound internet traffic.
+- **Public Subnet (`aws_subnet`)**: Subnet CIDR (`10.0.1.0/24`) with automatic public IP assignment.
+- **Route Table & Association (`aws_route_table`)**: Defines default route `0.0.0.0/0` directed to the Internet Gateway.
+- **Security Group (`aws_security_group`)**: Enforces least-privilege access on ports 80 (HTTP), 443 (HTTPS), 22 (SSH), and all egress.
+- **EC2 Instance (`aws_instance`)**: Ubuntu 24.04 LTS (`t2.micro` or `t3.micro`, Free Tier eligible) with automated Docker Engine install via `user_data`.
 
 ```bash
 cd terraform
@@ -170,7 +177,7 @@ cd terraform
 # 1. Initialize Terraform providers and backend
 terraform init
 
-# 2. Review resources to be provisioned (VPC, Security Group, EC2)
+# 2. Preview resources to be provisioned (VPC, IGW, Subnet, RT, SG, EC2)
 terraform plan
 
 # 3. Provision AWS infrastructure automatically
@@ -178,6 +185,9 @@ terraform apply -auto-approve
 ```
 
 **Terraform Outputs Provided:**
+- `vpc_id`: Custom VPC ID
+- `public_subnet_id`: Public Subnet ID
+- `security_group_id`: Security Group ID
 - `instance_public_ip`: EC2 IPv4 address
 - `application_url`: Frontend & API URL (`http://<EC2_IP>`)
 - `api_docs_url`: Swagger API docs (`http://<EC2_IP>/docs`)
@@ -187,7 +197,7 @@ terraform apply -auto-approve
 
 ### Automated CI/CD Pipeline with GitHub Actions
 
-The workflow defined in [`.github/workflows/deploy.yml`](file:///c:/Users/abhishek.cs/OneDrive%20-%20Trinity%20Mobility%20Pvt%20Ltd/Downloads/CRM-V2-SerpHawk-main/CRM-V2-SerpHawk-main/.github/workflows/deploy.yml) provides an automated pipeline triggered on code pushes to `main`:
+The workflow defined in [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) provides an automated pipeline triggered on code pushes to `main`:
 
 1. **Continuous Integration (CI Stage)**:
    - Validates multi-stage standalone Next.js Docker build.
@@ -209,35 +219,92 @@ In your GitHub Repository under **Settings > Secrets and variables > Actions**, 
 
 ## 🛠️ Manual AWS Resource Creation & Deployment Walkthrough
 
-If you prefer to manually set up resources via the AWS Console instead of using Terraform, follow this step-by-step walkthrough.
+If you prefer to manually set up resources via the **AWS Management Console** instead of using Terraform, follow this complete step-by-step walkthrough covering custom VPC, Internet Gateway, Subnet, Route Table, Security Group, EC2 instance, and Docker stack deployment.
 
-### Part A: Manual AWS Console Infrastructure Creation
+### Part A: Manual AWS Console Infrastructure Creation (VPC, IGW, Subnet, RT, SG, EC2)
 
-1. **Log in to AWS Console**:
-   - Select your target region (e.g., `us-east-1`).
+#### Step 1: Create Custom VPC
+1. Open the **AWS Management Console** and navigate to **VPC Dashboard** (ensure your region is selected, e.g., `us-east-1`).
+2. Click **Create VPC**.
+3. Under **Resources to create**, select **VPC only**.
+4. Configure:
+   - **Name tag**: `serphawk-vpc`
+   - **IPv4 CIDR block**: `10.0.0.0/16`
+   - **Tenancy**: Default
+5. Click **Create VPC**.
+6. Select `serphawk-vpc`, click **Actions > Edit VPC settings**, check both **Enable DNS resolution** and **Enable DNS hostnames**, and click **Save**.
 
-2. **Create Security Group**:
-   - Navigate to **EC2 > Security Groups > Create security group**.
-   - **Name**: `serphawk-sg`
+#### Step 2: Create Internet Gateway (IGW) & Attach to VPC
+1. In the VPC left navigation, click **Internet gateways**.
+2. Click **Create internet gateway**.
+3. **Name tag**: `serphawk-igw`
+4. Click **Create internet gateway**.
+5. In the banner or under **Actions**, click **Attach to VPC**.
+6. Select `serphawk-vpc` and click **Attach internet gateway**.
+
+#### Step 3: Create Public Subnet
+1. In the VPC left navigation, click **Subnets**.
+2. Click **Create subnet**.
+3. Configure:
+   - **VPC ID**: Select `serphawk-vpc`
+   - **Subnet name**: `serphawk-public-subnet`
+   - **Availability Zone**: Select any AZ (e.g., `us-east-1a`)
+   - **IPv4 subnet CIDR block**: `10.0.1.0/24`
+4. Click **Create subnet**.
+5. Select `serphawk-public-subnet`, click **Actions > Edit subnet settings**, check **Enable auto-assign public IPv4 address**, and click **Save**.
+
+#### Step 4: Create Route Table (RT) & Associate Subnet
+1. In the VPC left navigation, click **Route tables**.
+2. Click **Create route table**.
+3. Configure:
+   - **Name**: `serphawk-public-rt`
+   - **VPC**: Select `serphawk-vpc`
+4. Click **Create route table**.
+5. Select `serphawk-public-rt`, open the **Routes** tab, and click **Edit routes**:
+   - Click **Add route**
+   - **Destination**: `0.0.0.0/0`
+   - **Target**: Select **Internet Gateway** > `serphawk-igw`
+   - Click **Save changes**.
+6. Open the **Subnet associations** tab, click **Edit subnet associations**:
+   - Select `serphawk-public-subnet`
+   - Click **Save associations**.
+
+#### Step 5: Create Security Group (SG)
+1. In the VPC left navigation (or EC2 Dashboard), click **Security groups**.
+2. Click **Create security group**.
+3. Configure:
+   - **Security group name**: `serphawk-crm-sg`
    - **Description**: Security group for SERP Hawk CRM V2
-   - **Inbound Rules**:
-     - `HTTP` | Port `80` | Source: `0.0.0.0/0` (Anywhere IPv4)
-     - `HTTPS` | Port `443` | Source: `0.0.0.0/0` (Anywhere IPv4)
-     - `SSH` | Port `22` | Source: `0.0.0.0/0` (or your specific IP)
+   - **VPC**: Select `serphawk-vpc` *(do not select the default VPC)*
+4. Under **Inbound rules**, add:
+   - `HTTP` | Port `80` | Source: `Anywhere-IPv4` (`0.0.0.0/0`)
+   - `HTTPS` | Port `443` | Source: `Anywhere-IPv4` (`0.0.0.0/0`)
+   - `SSH` | Port `22` | Source: `My IP` (or `0.0.0.0/0`)
+5. Under **Outbound rules**:
+   - Ensure `All traffic` | `0.0.0.0/0` is present.
+6. Click **Create security group**.
 
-3. **Launch EC2 Instance**:
-   - Navigate to **EC2 Dashboard > Launch instance**.
+#### Step 6: Launch EC2 Instance in Custom VPC
+1. Navigate to **EC2 Dashboard > Instances** and click **Launch instances**.
+2. Configure:
    - **Name**: `SERP-Hawk-CRM-Server`
-   - **Application and OS Image**: Ubuntu Server 24.04 LTS (64-bit x86, Free Tier eligible).
-   - **Instance Type**: `t2.micro` or `t3.micro` (1 vCPU, 1 GiB RAM - Free Tier eligible).
-   - **Key Pair**: Select an existing key pair or click **Create new key pair** (`RSA`, `.pem`).
-   - **Network Settings**: Select your default VPC & Public Subnet. Select existing security group `serphawk-sg`. Ensure **Auto-assign Public IP** is set to **Enable**.
-   - **Configure Storage**: `20 GiB` `gp3` SSD (Free Tier allows up to 30 GB).
-   - Click **Launch Instance**.
+   - **Application and OS Image**: Ubuntu Server 24.04 LTS (64-bit x86, Free Tier eligible)
+   - **Instance Type**: `t2.micro` or `t3.micro` (1 vCPU, 1 GiB RAM - Free Tier eligible)
+   - **Key Pair**: Select your existing `.pem` key pair (or create a new one)
+3. Under **Network settings**, click **Edit**:
+   - **VPC**: Select `serphawk-vpc`
+   - **Subnet**: Select `serphawk-public-subnet`
+   - **Auto-assign Public IP**: `Enable`
+   - **Firewall (security groups)**: Choose **Select existing security group** and pick `serphawk-crm-sg`
+4. Under **Configure Storage**:
+   - `20 GiB` `gp3` SSD (Free Tier allows up to 30 GB)
+5. Click **Launch Instance**.
 
-4. **Elastic IP Allocation (Optional)**:
-   - Go to **EC2 > Elastic IPs > Allocate Elastic IP address**.
-   - Associate it with your newly launched `SERP-Hawk-CRM-Server` instance to ensure the public IP remains static across restarts.
+#### Step 7: Allocate & Associate Elastic IP (Optional / Recommended)
+1. Go to **EC2 > Network & Security > Elastic IPs**.
+2. Click **Allocate Elastic IP address** > **Allocate**.
+3. Select the allocated Elastic IP, click **Actions > Associate Elastic IP address**.
+4. Choose **Instance**: `SERP-Hawk-CRM-Server`, and click **Associate**.
 
 ---
 
@@ -249,12 +316,20 @@ If you prefer to manually set up resources via the AWS Console instead of using 
    ssh -i "your-key.pem" ubuntu@<YOUR-EC2-PUBLIC-IP>
    ```
 
-2. **Install Required System Packages (Docker & Git)**:
+2. **Install Required Packages & Configure Swap**:
    ```bash
+   # System updates and Docker installation
    sudo apt-get update
    sudo apt-get install -y docker.io docker-compose-v2 git
    sudo usermod -aG docker ubuntu
    newgrp docker
+
+   # Optional 2GB swap space on EBS SSD (prevents memory spikes during Next.js builds on 1GB RAM)
+   sudo fallocate -l 2G /swapfile
+   sudo chmod 600 /swapfile
+   sudo mkswap /swapfile
+   sudo swapon /swapfile
+   echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
    ```
 
 3. **Clone Repository & Configure Environment**:

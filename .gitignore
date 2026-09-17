@@ -41,5 +41,13 @@ last_scrape_debug.txt
 schema_inspect.txt
 health.json
 tmp_check_version.py
-test_*.py
 *.pyc
+
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfvars
+*.tfvars.json
+
