@@ -7,13 +7,16 @@ AI-Powered CRM for SEO Agencies | Next.js 16 + FastAPI + PostgreSQL + Docker + T
 ## 📋 Table of Contents
 1. [Overview & Tech Stack](#-overview--tech-stack)
 2. [DevOps Architecture & Service Rationale](#-devops-architecture--service-rationale)
-3. [AWS Free Tier Architecture Diagram](#%EF%B8%8F-aws-free-tier-architecture-diagram)
+3. [AWS Free Tier Architecture Diagram](#-aws-free-tier-architecture-diagram)
 4. [Enterprise Evolution (IaaS vs. PaaS)](#-enterprise-evolution-iaas-vs-paas)
 5. [Local Docker Deployment (Low-Resource Mode)](#-local-docker-deployment-low-resource-mode)
-6. [Infrastructure as Code (Terraform)](#-infrastructure-as-code-terraform)
-7. [CI/CD Pipeline (GitHub Actions)](#-cicd-pipeline-github-actions)
-8. [Manual AWS Deployment Walkthrough](#-manual-aws-deployment-walkthrough)
-9. [Candidate Submission Checklist](#-candidate-submission-checklist)
+6. [Automated Deployment (Terraform & GitHub Actions CI/CD)](#-automated-deployment-terraform--github-actions-cicd)
+   - [Provisioning Infrastructure with Terraform](#provisioning-infrastructure-with-terraform)
+   - [Automated CI/CD Pipeline with GitHub Actions](#automated-cicd-pipeline-with-github-actions)
+7. [Manual AWS Resource Creation & Deployment Walkthrough](#-manual-aws-resource-creation--deployment-walkthrough)
+   - [Part A: Manual AWS Console Infrastructure Creation](#part-a-manual-aws-console-infrastructure-creation)
+   - [Part B: Manual Server Setup & Application Deployment](#part-b-manual-server-setup--application-deployment)
+8. [Candidate Submission Checklist](#-candidate-submission-checklist)
 
 ---
 
@@ -56,23 +59,23 @@ When deploying on AWS within strict **Free Tier / Zero-Cost** limits, architectu
 
 ```mermaid
 graph TD
-    User["👤 Browser Client"] -->|HTTP / HTTPS Port 80/443| IGW["AWS Internet Gateway"]
+    User["👤 Browser Client"] -->|"HTTP / HTTPS Port 80/443"| IGW["AWS Internet Gateway"]
     
     subgraph VPC["AWS Virtual Private Cloud (VPC)"]
         subgraph PublicSubnet["Public Subnet"]
             subgraph EC2["EC2 t2.micro / t3.micro (1 vCPU, 1 GB RAM)"]
                 Nginx["Nginx Reverse Proxy (Port 80)"]
                 
-                Nginx -->|/ (Frontend)| Frontend["Next.js Container (Port 3000)"]
-                Nginx -->|/api, /docs, /ws| Backend["FastAPI Container (Port 8000)"]
+                Nginx -->|"/ (Frontend)"| Frontend["Next.js Container (Port 3000)"]
+                Nginx -->|"/api, /docs, /ws"| Backend["FastAPI Container (Port 8000)"]
                 
-                Backend -->|TCP 5432| DB["PostgreSQL 16 Alpine Container (Port 5432)"]
+                Backend -->|"TCP 5432"| DB["PostgreSQL 16 Alpine Container (Port 5432)"]
             end
         end
     end
     
-    Backend -->|Outbound HTTPS| OpenAI["OpenAI API"]
-    Backend -->|Outbound HTTPS| Gemini["Google Gemini API"]
+    Backend -->|"Outbound HTTPS"| OpenAI["OpenAI API"]
+    Backend -->|"Outbound HTTPS"| Gemini["Google Gemini API"]
 ```
 
 ---
@@ -127,73 +130,130 @@ docker stats --no-stream
 
 ---
 
-## ⚙️ Infrastructure as Code (Terraform)
+## ⚡ Automated Deployment (Terraform & GitHub Actions CI/CD)
 
-The [`terraform/`](file:///c:/Users/abhishek.cs/OneDrive%20-%20Trinity%20Mobility%20Pvt%20Ltd/Downloads/CRM-V2-SerpHawk-main/CRM-V2-SerpHawk-main/terraform) directory contains IaC manifests to automatically provision the AWS environment:
+The primary cloud deployment strategy utilizes **Terraform** for automated AWS infrastructure provisioning and **GitHub Actions** for continuous integration and automated continuous deployment (CI/CD).
+
+### Provisioning Infrastructure with Terraform
+
+The [`terraform/`](file:///c:/Users/abhishek.cs/OneDrive%20-%20Trinity%20Mobility%20Pvt%20Ltd/Downloads/CRM-V2-SerpHawk-main/CRM-V2-SerpHawk-main/terraform) directory contains complete Infrastructure as Code (IaC) manifests to automatically provision the AWS cloud environment:
 
 ```bash
 cd terraform
 
-# Initialize providers
+# 1. Initialize Terraform providers and backend
 terraform init
 
-# Review execution plan
+# 2. Review resources to be provisioned (VPC, Security Group, EC2)
 terraform plan
 
-# Provision AWS resources (EC2, Security Group, Docker)
+# 3. Provision AWS infrastructure automatically
 terraform apply -auto-approve
 ```
 
-Outputs will display:
-- `instance_public_ip`
-- `application_url`
-- `api_docs_url`
-- `ssh_command`
+**Terraform Outputs Provided:**
+- `instance_public_ip`: EC2 IPv4 address
+- `application_url`: Frontend & API URL (`http://<EC2_IP>`)
+- `api_docs_url`: Swagger API docs (`http://<EC2_IP>/docs`)
+- `ssh_command`: Ready-to-use SSH connection string
 
 ---
 
-## 🔄 CI/CD Pipeline (GitHub Actions)
+### Automated CI/CD Pipeline with GitHub Actions
 
-The workflow defined in [`.github/workflows/deploy.yml`](file:///c:/Users/abhishek.cs/OneDrive%20-%20Trinity%20Mobility%20Pvt%20Ltd/Downloads/CRM-V2-SerpHawk-main/CRM-V2-SerpHawk-main/.github/workflows/deploy.yml) provides automated CI/CD:
+The workflow defined in [`.github/workflows/deploy.yml`](file:///c:/Users/abhishek.cs/OneDrive%20-%20Trinity%20Mobility%20Pvt%20Ltd/Downloads/CRM-V2-SerpHawk-main/CRM-V2-SerpHawk-main/.github/workflows/deploy.yml) provides an automated pipeline triggered on code pushes to `main`:
 
-1. **Continuous Integration (CI)**:
-   - Validates Next.js standalone multi-stage Docker build.
-   - Validates Python FastAPI multi-stage wheel build.
-2. **Continuous Deployment (CD)**:
-   - On merge/push to `main`, connects to EC2 via SSH.
-   - Pulls latest commit, runs `docker compose up --build -d`, runs database migrations, and prunes unused images to protect storage.
+1. **Continuous Integration (CI Stage)**:
+   - Validates multi-stage standalone Next.js Docker build.
+   - Validates multi-stage FastAPI Python wheel Docker build.
+2. **Continuous Deployment (CD Stage)**:
+   - Connects securely to the AWS EC2 instance via SSH.
+   - Pulls latest commit from GitHub (`git pull origin main`).
+   - Rebuilds and restarts containers (`docker compose up --build -d`).
+   - Executes automatic database schema migration and seeding.
+   - Prunes dangling Docker images to preserve EBS disk space.
 
-### Setting Up GitHub Secrets:
-In your GitHub repository under **Settings > Secrets and variables > Actions**, add:
-- `EC2_HOST`: Your EC2 Public IPv4 address
+#### Setting Up GitHub Secrets:
+In your GitHub Repository under **Settings > Secrets and variables > Actions**, add:
+- `EC2_HOST`: EC2 Public IPv4 address (from Terraform output)
 - `EC2_USER`: `ubuntu`
-- `EC2_SSH_KEY`: Private Key (`.pem`) contents
+- `EC2_SSH_KEY`: Contents of your SSH private key (`.pem`)
 
 ---
 
-## ☁️ Manual AWS Deployment Walkthrough
+## 🛠️ Manual AWS Resource Creation & Deployment Walkthrough
 
-1. **Launch EC2 Instance**:
-   - Ubuntu 24.04 LTS (`t2.micro` or `t3.micro`, Free Tier).
-   - Inbound Security Rules: Port 80 (HTTP), 443 (HTTPS), 22 (SSH).
-   - Storage: 20 GB `gp3`.
+If you prefer to manually set up resources via the AWS Console instead of using Terraform, follow this step-by-step walkthrough.
 
-2. **Server Setup**:
+### Part A: Manual AWS Console Infrastructure Creation
+
+1. **Log in to AWS Console**:
+   - Select your target region (e.g., `us-east-1`).
+
+2. **Create Security Group**:
+   - Navigate to **EC2 > Security Groups > Create security group**.
+   - **Name**: `serphawk-sg`
+   - **Description**: Security group for SERP Hawk CRM V2
+   - **Inbound Rules**:
+     - `HTTP` | Port `80` | Source: `0.0.0.0/0` (Anywhere IPv4)
+     - `HTTPS` | Port `443` | Source: `0.0.0.0/0` (Anywhere IPv4)
+     - `SSH` | Port `22` | Source: `0.0.0.0/0` (or your specific IP)
+
+3. **Launch EC2 Instance**:
+   - Navigate to **EC2 Dashboard > Launch instance**.
+   - **Name**: `SERP-Hawk-CRM-Server`
+   - **Application and OS Image**: Ubuntu Server 24.04 LTS (64-bit x86, Free Tier eligible).
+   - **Instance Type**: `t2.micro` or `t3.micro` (1 vCPU, 1 GiB RAM - Free Tier eligible).
+   - **Key Pair**: Select an existing key pair or click **Create new key pair** (`RSA`, `.pem`).
+   - **Network Settings**: Select your default VPC & Public Subnet. Select existing security group `serphawk-sg`. Ensure **Auto-assign Public IP** is set to **Enable**.
+   - **Configure Storage**: `20 GiB` `gp3` SSD (Free Tier allows up to 30 GB).
+   - Click **Launch Instance**.
+
+4. **Elastic IP Allocation (Optional)**:
+   - Go to **EC2 > Elastic IPs > Allocate Elastic IP address**.
+   - Associate it with your newly launched `SERP-Hawk-CRM-Server` instance to ensure the public IP remains static across restarts.
+
+---
+
+### Part B: Manual Server Setup & Application Deployment
+
+1. **SSH into the EC2 Instance**:
    ```bash
-   ssh -i "your-key.pem" ubuntu@<EC2-PUBLIC-IP>
-   sudo apt-get update && sudo apt-get install -y docker.io docker-compose-v2 git
-   sudo usermod -aG docker ubuntu
+   chmod 400 your-key.pem
+   ssh -i "your-key.pem" ubuntu@<YOUR-EC2-PUBLIC-IP>
    ```
 
-3. **Deploy Application**:
+2. **Install Required System Packages (Docker & Git)**:
    ```bash
-   git clone <YOUR-REPO-URL> app
+   sudo apt-get update
+   sudo apt-get install -y docker.io docker-compose-v2 git
+   sudo usermod -aG docker ubuntu
+   newgrp docker
+   ```
+
+3. **Clone Repository & Configure Environment**:
+   ```bash
+   git clone https://github.com/abhishekcsshetty/SERP-Hawk-CRM-V2.git app
    cd app
    cp .env.example .env
-   # Update NEXT_PUBLIC_API_BASE_URL to http://<EC2-PUBLIC-IP> in .env
+   ```
+   *Edit `.env` if necessary to update `NEXT_PUBLIC_API_BASE_URL` to `http://<YOUR-EC2-PUBLIC-IP>`.*
+
+4. **Launch Docker Stack**:
+   ```bash
    docker compose up --build -d
+   ```
+
+5. **Run Database Migrations & Seed Initial Data**:
+   ```bash
    docker exec serphawk_backend python create_tables.py
    docker exec serphawk_backend python seed_db.py
+   ```
+
+6. **Verify Running Containers**:
+   ```bash
+   docker ps
+   docker stats --no-stream
    ```
 
 ---
