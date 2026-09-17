@@ -13,10 +13,12 @@ AI-Powered CRM for SEO Agencies | Next.js 16 + FastAPI + PostgreSQL + Docker + T
 6. [Automated Deployment (Terraform & GitHub Actions CI/CD)](#-automated-deployment-terraform--github-actions-cicd)
    - [Provisioning Infrastructure with Terraform](#provisioning-infrastructure-with-terraform)
    - [Automated CI/CD Pipeline with GitHub Actions](#automated-cicd-pipeline-with-github-actions)
+   - [How GitHub Actions Automates Server Commands](#how-github-actions-automates--maintains-server-commands)
 7. [Manual AWS Resource Creation & Deployment Walkthrough](#-manual-aws-resource-creation--deployment-walkthrough)
    - [Part A: Manual AWS Console Infrastructure Creation (VPC, IGW, Subnet, RT, SG, EC2)](#part-a-manual-aws-console-infrastructure-creation-vpc-igw-subnet-rt-sg-ec2)
    - [Part B: Manual Server Setup & Application Deployment](#part-b-manual-server-setup--application-deployment)
-8. [Candidate Submission Checklist](#-candidate-submission-checklist)
+8. [Live Deployment Showcase & Verification](#-live-deployment-showcase--verification)
+9. [Candidate Submission Checklist](#-candidate-submission-checklist)
 
 ---
 
@@ -210,10 +212,26 @@ The workflow defined in [`.github/workflows/deploy.yml`](.github/workflows/deplo
    - Prunes dangling Docker images to preserve EBS disk space.
 
 #### Setting Up GitHub Secrets:
-In your GitHub Repository under **Settings > Secrets and variables > Actions**, add:
-- `EC2_HOST`: EC2 Public IPv4 address (from Terraform output)
+In your GitHub Repository under **Settings > Secrets and variables > Actions**, add as **Repository Secrets**:
+- `EC2_HOST`: EC2 Public IPv4 address (from Terraform output, e.g., `44.198.171.185`)
 - `EC2_USER`: `ubuntu`
-- `EC2_SSH_KEY`: Contents of your SSH private key (`.pem`)
+- `EC2_SSH_KEY`: Contents of your SSH private key (`serphawk-key.pem`)
+
+---
+
+### How GitHub Actions Automates & Maintains Server Commands
+
+All commands previously performed manually on the server are codified and maintained inside the `script` block of [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) using `appleboy/ssh-action`:
+
+| Manual Deployment Command | Automated in GitHub Actions Pipeline | Pipeline Maintenance & Idempotency |
+| :--- | :--- | :--- |
+| `git clone <repo>` / `git pull` | `if [ ! -d "/home/ubuntu/app" ]; then git clone ... else git pull origin main; fi` | **Initial vs Continuous**: Detects fresh EC2 instances provisioned by Terraform, clones on first run, and pulls updates on future pushes. |
+| `cp .env.example .env` | `cp .env.example .env` | Initializes environment configuration on server setup. |
+| `sed -i "s|...|...|g" .env` | `sed -i "s\|http://localhost:8000\|http://${{ secrets.EC2_HOST }}\|g" .env` | **Dynamic IP Injection**: Automatically updates the public frontend API URL using the `EC2_HOST` secret without hardcoding IP addresses. |
+| `docker compose up --build -d` | `docker compose up --build -d` | Compiles optimized standalone multi-stage builds and restarts containers in background mode with zero downtime. |
+| `docker exec ... create_tables.py` | `docker exec serphawk_backend python create_tables.py` | **Idempotent DB Migration**: Checks and provisions tables only if they do not exist. |
+| `docker exec ... seed_db.py` | `docker exec serphawk_backend python seed_db.py` | **Idempotent Seeding**: Creates the initial system admin and seed data without duplicating records. |
+| `docker image prune -f` | `docker image prune -f` | **Free Tier EBS Safety**: Cleans up dangling build layers automatically after every deployment so the 20 GB SSD never fills up. |
 
 ---
 
@@ -359,6 +377,46 @@ If you prefer to manually set up resources via the **AWS Management Console** in
 
 ---
 
+## 📸 Live Deployment Showcase & Verification
+
+The entire infrastructure has been provisioned via Terraform and continuously delivered via GitHub Actions to an AWS Free Tier EC2 instance.
+
+### 🌐 Live Production Endpoints
+- **Web Application**: [`http://44.198.171.185/login`](http://44.198.171.185/login)
+- **FastAPI Interactive Swagger Docs**: [`http://44.198.171.185/docs`](http://44.198.171.185/docs)
+- **Host Infrastructure**: AWS EC2 `t3.micro` (2 vCPUs, 1 GiB RAM, Ubuntu 24.04 LTS, `us-east-1a`)
+
+---
+
+### 1. GitHub Actions CI/CD Pipeline (All Checks Passed)
+Automated CI validation (multi-stage Next.js standalone and FastAPI wheel Docker builds) followed by automated SSH deployment to AWS EC2:
+
+![GitHub Actions CI/CD Success](docs/images/06_github_actions_success.png)
+
+---
+
+### 2. Live Application UI & Swagger API Documentation
+Production CRM running on Port 80 via Nginx reverse proxy on the live public IP:
+
+| Next.js 16 Web Application (`/login`) | FastAPI Swagger Documentation (`/docs`) |
+| :---: | :---: |
+| ![SERP Hawk CRM Login](docs/images/01_live_login.png) | ![Swagger API Docs](docs/images/02_live_swagger_docs.png) |
+
+---
+
+### 3. AWS Management Console Verification
+Verified active resources under AWS Free Tier in `us-east-1`:
+
+| AWS EC2 Instance (`t3.micro` Running) | Security Group (`serphawk-crm-sg` Inbound 80, 443, 22) |
+| :---: | :---: |
+| ![EC2 Instance](docs/images/03_aws_ec2_console.png) | ![Security Group](docs/images/07_aws_security_group.png) |
+
+| Custom VPC (`serphawk-vpc`) | Public Subnet (`serphawk-public-subnet`) |
+| :---: | :---: |
+| ![AWS VPC](docs/images/04_aws_vpc_console.png) | ![Public Subnet](docs/images/05_aws_subnet_console.png) |
+
+---
+
 ## 📑 Candidate Submission Checklist
 
 - [x] **Local Execution Verified**: Stack running locally, verified with `docker stats` at ~160MB RAM.
@@ -366,5 +424,6 @@ If you prefer to manually set up resources via the **AWS Management Console** in
 - [x] **Strict Free Tier Compliance**: No chargeable AWS services used ($0.00/month).
 - [x] **Infrastructure as Code**: Terraform module provided in `terraform/`.
 - [x] **CI/CD Automation**: GitHub Actions pipeline provided in `.github/workflows/deploy.yml`.
+- [x] **Live AWS Deployment Verified**: Deployed to EC2 `t3.micro` (`44.198.171.185`) with green CI/CD.
 - [x] **Security Guardrails**: `.env` strictly ignored by `.gitignore` and `.dockerignore`.
 - [x] **Architecture Diagram & Rationale**: Mermaid diagram and service comparison documented.
