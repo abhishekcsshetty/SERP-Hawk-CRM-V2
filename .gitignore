@@ -49,6 +49,7 @@ tmp_check_version.py
 *.tfstate.*
 crash.log
 *.tfvars
+!terraform/environments/*.tfvars
 *.tfvars.json
 *.pem
 *.key

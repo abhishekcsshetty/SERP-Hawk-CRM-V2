@@ -1,0 +1,17 @@
+# ==============================================================================
+# Remote State Backend Configuration (S3 + DynamoDB State Locking)
+# To enable:
+# 1. Run terraform apply inside the bootstrap/ directory to create your bucket & lock table
+# 2. Rename this file to backend.tf and fill in your generated bucket name
+# 3. Run: terraform init -migrate-state
+# ==============================================================================
+
+# terraform {
+#   backend "s3" {
+#     bucket         = "YOUR-SERPHAWK-TFSTATE-BUCKET-NAME"
+#     key            = "crm-v2/terraform.tfstate"
+#     region         = "us-east-1"
+#     dynamodb_table = "serphawk-tfstate-locks"
+#     encrypt        = true
+#   }
+# }

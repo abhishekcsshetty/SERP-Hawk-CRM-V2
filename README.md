@@ -162,34 +162,80 @@ docker stats --no-stream
 
 The primary cloud deployment strategy utilizes **Terraform** for automated AWS infrastructure provisioning and **GitHub Actions** for continuous integration and automated continuous deployment (CI/CD).
 
-### Provisioning Infrastructure with Terraform
+### Enterprise Infrastructure as Code (Terraform Architecture)
 
-The [`terraform/`](terraform/) directory contains complete Infrastructure as Code (IaC) manifests to provision an isolated AWS networking stack and compute instance from scratch:
+The [`terraform/`](terraform/) directory implements an enterprise-grade, modular Infrastructure as Code (IaC) framework designed around AWS Free Tier ($0.00 / month), automated state backups, distributed concurrency locking, and multi-environment workspaces:
 
-- **Custom VPC (`aws_vpc`)**: Dedicated CIDR block (`10.0.0.0/16`) with DNS support and DNS hostnames enabled.
-- **Internet Gateway (`aws_internet_gateway`)**: Attached to the custom VPC for inbound and outbound internet traffic.
-- **Public Subnet (`aws_subnet`)**: Subnet CIDR (`10.0.1.0/24`) with automatic public IP assignment.
-- **Route Table & Association (`aws_route_table`)**: Defines default route `0.0.0.0/0` directed to the Internet Gateway.
-- **Security Group (`aws_security_group`)**: Enforces least-privilege access on ports 80 (HTTP), 443 (HTTPS), 22 (SSH), and all egress.
-- **EC2 Instance (`aws_instance`)**: Ubuntu 24.04 LTS (`t2.micro` or `t3.micro`, Free Tier eligible) with automated Docker Engine install via `user_data`.
+#### 1. Modular Codebase Architecture
+```
+terraform/
+├── backend.tf                  # Remote S3 backend + DynamoDB state locking
+├── bootstrap/                  # Bootstrap module provisioning S3 bucket & DynamoDB lock table
+│   ├── main.tf
+│   ├── variables.tf
+│   └── outputs.tf
+├── environments/               # Environment-specific configuration profiles
+│   ├── dev.tfvars
+│   └── prod.tfvars
+├── locals.tf                   # Dynamic workspace-to-environment mapping & unified tags
+├── main.tf                     # Root orchestrator invoking modules + 'moved' migration blocks
+├── variables.tf                # Strict variable definitions with regex & enum input validation
+├── outputs.tf                  # Aggregated root outputs exposed from child modules
+└── modules/                    # Reusable, encapsulated domain modules
+    ├── networking/             # VPC (10.0.0.0/16), IGW, Public Subnet, Route Table & associations
+    ├── security/               # Security group (Ports 80, 443, 22 ingress; all egress)
+    └── compute/                # Dynamic Ubuntu 24.04 AMI lookup, EC2 (t3.micro), 20GB gp3, user_data (Docker + swap)
+```
 
+- **`modules/networking`**: Isolated AWS VPC (`10.0.0.0/16`) with DNS resolution/hostnames enabled, Internet Gateway (IGW), public subnet (`10.0.1.0/24`) with automatic public IP mapping, and default routing (`0.0.0.0/0` -> IGW).
+- **`modules/security`**: Hardened security group (`serphawk-crm-sg`) enforcing least-privilege ingress (Port 80 HTTP, Port 443 HTTPS, Port 22 SSH restricted to admin IP) and full egress.
+- **`modules/compute`**: Dynamic Canonical Ubuntu 24.04 LTS AMI lookup (`data "aws_ami"`), automated EC2 bootstrapping via `user_data` (Docker Engine, Docker Compose plugin, and 2GB SSD swapfile), 20 GB `gp3` root volume, and `lifecycle { ignore_changes = [user_data] }` to guard against accidental live instance recreation.
+
+#### 2. Remote State Storage & Distributed Locking (Zero-Cost Free Tier)
+- **Point-in-Time Backup (`aws_s3_bucket`)**: State is persisted in an Amazon S3 bucket with **Object Versioning enabled**. Every `terraform apply` creates an immutable historical version, enabling instant disaster recovery and rollback.
+- **Server-Side Encryption**: All state files are automatically encrypted at rest using `AES256`.
+- **Public Access Block**: Strict bucket-level block preventing any public ACLs or policies.
+- **Distributed Concurrency Lock (`aws_dynamodb_table`)**: Uses a DynamoDB table (`serphawk-tfstate-locks`) with `LockID` partition key to lock state during plans and applies. Prevents race conditions, team collisions, or overlapping CI/CD pipeline executions.
+- **$0.00 Cost Rationale**: Both services operate 100% within the **AWS Free Tier** (5 GB S3 standard storage + DynamoDB `PAY_PER_REQUEST` billing with 25 free read/write units forever = **$0.00 idle cost**).
+
+#### 3. Multi-Environment Workspaces (`dev` vs. `prod`)
+Terraform Workspaces allow deploying isolated environments (e.g. `dev`, `stage`, `prod`) using the same modular codebase:
+- `locals.tf` automatically resolves the active environment:
+  ```hcl
+  environment = terraform.workspace == "default" ? "prod" : terraform.workspace
+  ```
+- Environment variables are decoupled into `environments/dev.tfvars` and `environments/prod.tfvars`.
+
+#### 4. Advanced Terraform Patterns Implemented
+- **Strict Input Validation**: Validates AWS regions, CIDR IP formats, and restricts EC2 instance types to Free Tier eligible tiers (`t3.micro`, `t2.micro`, `t3.nano`).
+- **Zero-Downtime State Refactoring (`moved` blocks)**: Allows refactoring root resources into child modules without destroying or recreating live cloud instances.
+- **Dynamic Resource Sizing**: Automatic AZ selection using `data "aws_availability_zones"`.
+
+#### 5. Terraform Workflow & Commands Cheatsheet
 ```bash
 cd terraform
 
-# 1. Initialize Terraform providers and backend
+# 1. Initialize remote backend (S3 + DynamoDB locking)
 terraform init
 
-# 2. Preview resources to be provisioned (VPC, IGW, Subnet, RT, SG, EC2)
-terraform plan
+# 2. Workspace Management
+terraform workspace list              # List existing workspaces
+terraform workspace new dev           # Create a new environment workspace
+terraform workspace select prod       # Switch to production workspace
 
-# 3. Provision AWS infrastructure automatically
-terraform apply -auto-approve
+# 3. Plan & Apply with Environment Var Files
+terraform plan -var-file="environments/prod.tfvars"
+terraform apply -var-file="environments/prod.tfvars" -auto-approve
+
+# 4. Inspect State Outputs
+terraform output
 ```
 
 **Terraform Outputs Provided:**
 - `vpc_id`: Custom VPC ID
 - `public_subnet_id`: Public Subnet ID
 - `security_group_id`: Security Group ID
+- `instance_id`: EC2 Instance ID
 - `instance_public_ip`: EC2 IPv4 address
 - `application_url`: Frontend & API URL (`http://<EC2_IP>`)
 - `api_docs_url`: Swagger API docs (`http://<EC2_IP>/docs`)

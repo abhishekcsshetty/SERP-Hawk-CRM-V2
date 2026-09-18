@@ -1,3 +1,9 @@
+# ==============================================================================
+# SERP Hawk CRM V2 - Root Terraform Architecture
+# Orchestrates Child Modules (Networking, Security, Compute)
+# Multi-Environment Workspaces, Centralized Tags, and Zero-Downtime State Moves
+# ==============================================================================
+
 terraform {
   required_version = ">= 1.5.0"
   required_providers {
@@ -12,205 +18,82 @@ provider "aws" {
   region = var.aws_region
 }
 
-# ----------------------------------------------------
-# 1. Custom VPC
-# ----------------------------------------------------
-resource "aws_vpc" "crm_vpc" {
-  cidr_block           = var.vpc_cidr
-  enable_dns_support   = true
-  enable_dns_hostnames = true
+# ------------------------------------------------------------------------------
+# 1. Networking Module (VPC, IGW, Subnet, Route Table)
+# ------------------------------------------------------------------------------
+module "networking" {
+  source = "./modules/networking"
 
-  tags = {
-    Name        = "serphawk-vpc"
-    Environment = "production"
-    ManagedBy   = "Terraform"
-  }
+  vpc_cidr           = var.vpc_cidr
+  public_subnet_cidr = var.public_subnet_cidr
+  availability_zone  = local.availability_zone
+  environment        = local.environment
+  tags               = local.common_tags
 }
 
-# ----------------------------------------------------
-# 2. Internet Gateway (IGW)
-# ----------------------------------------------------
-resource "aws_internet_gateway" "crm_igw" {
-  vpc_id = aws_vpc.crm_vpc.id
+# ------------------------------------------------------------------------------
+# 2. Security Module (Security Groups & Least-Privilege Rules)
+# ------------------------------------------------------------------------------
+module "security" {
+  source = "./modules/security"
 
-  tags = {
-    Name        = "serphawk-igw"
-    Environment = "production"
-    ManagedBy   = "Terraform"
-  }
+  vpc_id      = module.networking.vpc_id
+  admin_cidr  = var.admin_cidr
+  environment = local.environment
+  tags        = local.common_tags
 }
 
-# ----------------------------------------------------
-# 3. Public Subnet
-# ----------------------------------------------------
-resource "aws_subnet" "crm_public_subnet" {
-  vpc_id                  = aws_vpc.crm_vpc.id
-  cidr_block              = var.public_subnet_cidr
-  map_public_ip_on_launch = true
-  availability_zone       = "${var.aws_region}a"
+# ------------------------------------------------------------------------------
+# 3. Compute Module (Ubuntu AMI, 2GB Swap, Docker Engine, EC2 Instance)
+# ------------------------------------------------------------------------------
+module "compute" {
+  source = "./modules/compute"
 
-  tags = {
-    Name        = "serphawk-public-subnet"
-    Environment = "production"
-    ManagedBy   = "Terraform"
-  }
+  instance_type     = var.instance_type
+  key_name          = var.key_name
+  subnet_id         = module.networking.public_subnet_id
+  security_group_id = module.security.security_group_id
+  volume_size       = var.volume_size
+  environment       = local.environment
+  tags              = local.common_tags
 }
 
-# ----------------------------------------------------
-# 4. Route Table (RT) for Public Subnet
-# ----------------------------------------------------
-resource "aws_route_table" "crm_public_rt" {
-  vpc_id = aws_vpc.crm_vpc.id
-
-  route {
-    cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.crm_igw.id
-  }
-
-  tags = {
-    Name        = "serphawk-public-rt"
-    Environment = "production"
-    ManagedBy   = "Terraform"
-  }
+# ------------------------------------------------------------------------------
+# 4. Zero-Downtime State Refactoring (Terraform 1.1+ 'moved' blocks)
+# These blocks cleanly migrate existing monolithic state into modular namespaces
+# with 0 destructions, 0 recreations, and 0 downtime for the running EC2 server.
+# ------------------------------------------------------------------------------
+moved {
+  from = aws_vpc.crm_vpc
+  to   = module.networking.aws_vpc.crm_vpc
 }
 
-# ----------------------------------------------------
-# 5. Route Table Association (RT to Subnet)
-# ----------------------------------------------------
-resource "aws_route_table_association" "crm_public_rta" {
-  subnet_id      = aws_subnet.crm_public_subnet.id
-  route_table_id = aws_route_table.crm_public_rt.id
+moved {
+  from = aws_internet_gateway.crm_igw
+  to   = module.networking.aws_internet_gateway.crm_igw
 }
 
-# ----------------------------------------------------
-# 6. Security Group (SG) for CRM Application
-# ----------------------------------------------------
-resource "aws_security_group" "crm_sg" {
-  name        = "serphawk-crm-sg"
-  description = "Security group for SERP Hawk CRM V2"
-  vpc_id      = aws_vpc.crm_vpc.id
-
-  # HTTP Entry
-  ingress {
-    description = "Allow HTTP inbound from anywhere"
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  # HTTPS Entry
-  ingress {
-    description = "Allow HTTPS inbound from anywhere"
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  # SSH for Administrator
-  ingress {
-    description = "Allow SSH inbound from admin IP"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = [var.admin_cidr]
-  }
-
-  # Outbound to Internet (HTTPS Egress to OpenAI/Gemini & OS updates)
-  egress {
-    description = "Allow all outbound traffic"
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = {
-    Name        = "serphawk-crm-sg"
-    Environment = "production"
-    ManagedBy   = "Terraform"
-  }
+moved {
+  from = aws_subnet.crm_public_subnet
+  to   = module.networking.aws_subnet.crm_public_subnet
 }
 
-# ----------------------------------------------------
-# 7. Fetch Latest Ubuntu 24.04 LTS AMI (Free Tier Eligible)
-# ----------------------------------------------------
-data "aws_ami" "ubuntu" {
-  most_recent = true
-  owners      = ["099720109477"] # Canonical
-
-  filter {
-    name   = "name"
-    values = ["ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*"]
-  }
-
-  filter {
-    name   = "virtualization-type"
-    values = ["hvm"]
-  }
+moved {
+  from = aws_route_table.crm_public_rt
+  to   = module.networking.aws_route_table.crm_public_rt
 }
 
-# ----------------------------------------------------
-# 8. User Data script to automatically provision Docker
-# ----------------------------------------------------
-locals {
-  user_data = <<-EOF
-              #!/bin/bash
-              set -e
-
-              # System update
-              apt-get update -y
-              apt-get install -y ca-certificates curl gnupg git
-
-              # Install Docker Official Repo
-              install -m 0755 -d /etc/apt/keyrings
-              curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-              chmod a+r /etc/apt/keyrings/docker.gpg
-
-              echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
-
-              apt-get update -y
-              apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-
-              # Configure 2GB swap on EBS SSD (Prevents memory spikes during Next.js builds on 1GB RAM)
-              if [ ! -f /swapfile ]; then
-                fallocate -l 2G /swapfile
-                chmod 600 /swapfile
-                mkswap /swapfile
-                swapon /swapfile
-                echo '/swapfile none swap sw 0 0' >> /etc/fstab
-              fi
-
-              # Enable Docker for ubuntu user
-              usermod -aG docker ubuntu
-              systemctl enable docker
-              systemctl start docker
-              EOF
+moved {
+  from = aws_route_table_association.crm_public_rta
+  to   = module.networking.aws_route_table_association.crm_public_rta
 }
 
-# ----------------------------------------------------
-# 9. EC2 Instance (Free Tier Eligible)
-# ----------------------------------------------------
-resource "aws_instance" "crm_server" {
-  ami                         = data.aws_ami.ubuntu.id
-  instance_type               = var.instance_type
-  key_name                    = var.key_name
-  subnet_id                   = aws_subnet.crm_public_subnet.id
-  vpc_security_group_ids      = [aws_security_group.crm_sg.id]
-  associate_public_ip_address = true
-  user_data                   = local.user_data
+moved {
+  from = aws_security_group.crm_sg
+  to   = module.security.aws_security_group.crm_sg
+}
 
-  # Free tier allows up to 30 GB gp3 root volume
-  root_block_device {
-    volume_size           = 20
-    volume_type           = "gp3"
-    delete_on_termination = true
-  }
-
-  tags = {
-    Name        = "serphawk-crm-server"
-    Environment = "production"
-    ManagedBy   = "Terraform"
-  }
+moved {
+  from = aws_instance.crm_server
+  to   = module.compute.aws_instance.crm_server
 }
